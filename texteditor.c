@@ -1,53 +1,94 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <pdcurses/curses.h>
+#include <iostream>
+#include <conio.h> // For _getch() on Windows
+#include <termios.h> // For termios functions on Linux
+#include <unistd.h>  // For read() on Linux
+#include <windows.h>  // For SetConsoleMode() and GetStdHandle() on Windows
 
-void initEditor() {
-    initscr(); // Initialize the curses library
-    raw();     // Disable line buffering
-    keypad(stdscr, TRUE); // Enable special keys
-    noecho(); // Don't display typed characters
+#ifdef _WIN32 // Define platform-specific functions
+
+// Windows functions
+int _getch() {
+  return _getch();
 }
 
-void closeEditor() {
-    endwin(); // End curses mode
+void enableRawMode() {
+  HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
+  if (hStdin == INVALID_HANDLE_VALUE) {
+    std::cerr << "Failed to get standard input handle." << std::endl;
+    return;
+  }
+
+  DWORD dwMode;
+  if (!GetConsoleMode(hStdin, &dwMode)) {
+    std::cerr << "Failed to get console mode." << std::endl;
+    return;
+  }
+
+  dwMode &= ~ENABLE_ECHO_INPUT; // Turn off echoing
+  dwMode |= ENABLE_PROCESSED_INPUT; // Enable processing of special keys (e.g., Ctrl+C)
+  if (!SetConsoleMode(hStdin, dwMode)) {
+    std::cerr << "Failed to set console mode." << std::endl;
+    return;
+  }
 }
 
-void displayFile(const char *filename) {
-    FILE *file = fopen(filename, "r");
-    if (file == NULL) {
-        printw("Error opening file.\n");
-        return;
-    }
+void disableRawMode() {
+  HANDLE hStdin = GetStdHandle(STD_INPUT_HANDLE);
+  if (hStdin == INVALID_HANDLE_VALUE) {
+    std::cerr << "Failed to get standard input handle." << std::endl;
+    return;
+  }
 
-    clear(); // Clear the screen
-
-    int ch;
-    while ((ch = fgetc(file)) != EOF) {
-        printw("%c", ch); // Print character to the screen
-    }
-
-    fclose(file);
-    refresh(); // Refresh the screen
+  if (!SetConsoleMode(hStdin, ENABLE_ECHO_INPUT | ENABLE_PROCESSED_INPUT)) {
+    std::cerr << "Failed to restore console mode." << std::endl;
+    return;
+  }
 }
 
-int main(int argc, char *argv[]) {
-    if (argc != 2) {
-        printf("Usage: %s <filename>\n", argv[0]);
-        return 1;
+#else // Define platform-specific functions for Linux
+
+// Linux functions
+int _getch() {
+  char c;
+  read(STDIN_FILENO, &c, 1);
+  return c;
+}
+
+void enableRawMode() {
+  struct termios raw;
+  tcgetattr(STDIN_FILENO, &raw);
+  atexit(tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw));
+
+  raw.c_iflag &= ~(BRKINT | ICRNL | INPCK | ISTRIP | IXON);
+  raw.c_oflag &= ~(OPOST);
+  raw.c_cflag |= (CS8);
+  raw.c_lflag &= ~(ECHO | ICANON | IEXTEN | ISIG);
+  raw.c_cc[VMIN] = 0;
+  raw.c_cc[VTIME] = 1;
+
+  if (tcsetattr(STDIN_FILENO, TCSAFLUSH, &raw) < 0)
+    perror("tcsetattr");
+}
+
+void disableRawMode() {
+  // No need to disable raw mode explicitly on Linux,
+  // as exit() will automatically restore terminal settings.
+}
+
+#endif
+
+int main() {
+  enableRawMode();
+
+  char c;
+  while ((c = _getch()) != 'q') {
+    if (iscntrl(c)) {
+      std::cout << static_cast<int>(c) << std::endl;
+    } else {
+      std::cout << static_cast<int>(c) << " ('" << c << "')" << std::endl;
     }
+  }
 
-    const char *filename = argv[1];
-
-    initEditor(); // Initialize the text editor
-
-    displayFile(filename); // Display the contents of the file
-
-    printw("\nPress any key to exit...");
-    refresh();
-
-    getch(); // Wait for a key press
-    closeEditor(); // Close the text editor
-
-    return 0;
+  disableRawMode();
+  return 0;
 }
